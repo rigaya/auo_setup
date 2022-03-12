@@ -1,0 +1,38 @@
+﻿#include <winver.h>
+#include "auo_setup_version.h"
+
+#define VER_FILEVERSION     AUO_SETUP_VERSION
+#define VER_STR_FILEVERSION AUO_SETUP_VERSION_STR
+#define EXE_NAME            "auo_setup.exe"
+#define EXE_INFO            "auo_setup (main)"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     VER_FILEVERSION
+PRODUCTVERSION  VER_FILEVERSION
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       ( VER_DEBUG | VER_PRIVATE )
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_DLL
+FILESUBTYPE     VFT_APP
+BEGIN
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x411, 1200
+    END
+
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041104b0"
+        BEGIN
+            VALUE "Comments",         "auo_setupのメインモジュールです。"
+            VALUE "CompanyName",      ""
+            VALUE "FileDescription",  EXE_INFO
+            VALUE "FileVersion",      VER_STR_FILEVERSION
+            VALUE "InternalName",     EXE_NAME
+            VALUE "OriginalFileName", EXE_NAME
+            VALUE "LegalCopyright",   "auo_setup.exe by rigaya"
+            VALUE "ProductName",      EXE_INFO
+            VALUE "ProductVersion",   VER_STR_FILEVERSION
+        END
+    END
+END
