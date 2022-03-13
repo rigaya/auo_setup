@@ -250,9 +250,10 @@ void run_auo_setup(const char *exe_args) {
     }
 
     sprintf_s(mes,
-        "%s を使用できるようにするための準備を行います。\n", install_name);
+        "%s を使用できるようにする準備を行います。\n", install_name);
     if (check_admin_required()) {
         strcat_s(mes,
+            "\n"
             "このあと「このアプリがデバイスに変更を加えることを許可しますか?」と\n"
             "表示されたら「はい」をクリックしてください。\n");
     }
