@@ -146,9 +146,9 @@ void run_auo_setup_thread(const char *auo_setup_exe_path, const char *exe_args) 
     eventAbort.reset();
 
     //エラー終了していなければ、自動でウィンドウを閉じる
-    if (!error) {
-        SendMessage(hWndDialog, WM_CLOSE, 0, 0);
-    }
+    //if (!error) {
+    //    SendMessage(hWndDialog, WM_CLOSE, 0, 0);
+    //}
 }
 
 void show_dialog_window_and_run(const char *title, const char *auo_setup_exe_path, const char *exe_args) {

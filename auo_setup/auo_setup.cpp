@@ -502,6 +502,8 @@ int main(int argc, char **argv) {
         print_message("PCの再起動後、%s が使用できるようになります。\n", install_name);
         return -1;
     }
+    print_message("\n");
+    print_message("このウィンドウを閉じ、\n");
     print_message("Aviutlの出力プラグインに %s が追加されているか、確認してください。\n", install_name);
     return 0;
 }
