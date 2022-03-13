@@ -17,7 +17,7 @@ static HINSTANCE  hInstanceDLL = NULL;
 static HWND       hWndDialog   = NULL;
 static HWND       hWndEdit     = NULL;
 static const int  WindowWidth  = 640;
-static const int  WindowHeight = 480;
+static const int  WindowHeight = 320;
 
 static const int  IDC_EDIT     = 100;
 

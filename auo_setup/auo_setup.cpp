@@ -169,7 +169,6 @@ InstallerResult check_vc_runtime(const char *exe_dir, BOOL quiet, BOOL force_ins
     fprintf_check("VC runtime をインストールします。\n");
     DWORD return_code = 0;
     RunInstaller(path_installer, "/quiet /norestart", NULL, "VC runtime インストール", TRUE, TRUE, FALSE, quiet, &return_code, func_check_abort);
-    fprintf_check("\n\n");
     remove(path_installer);
     if (   return_code == ERROR_SUCCESS_REBOOT_INITIATED
         || return_code == ERROR_SUCCESS_REBOOT_REQUIRED) {
@@ -185,6 +184,7 @@ InstallerResult check_vc_runtime(const char *exe_dir, BOOL quiet, BOOL force_ins
         fprintf_check("%s\n", buffer);
         return INSTALLER_RESULT_ERROR;
     }
+    fprintf_check("VC runtime のインストールが完了しました。\n\n");
     return INSTALLER_RESULT_SUCCESS;
 }
 
@@ -291,6 +291,7 @@ InstallerResult check_net_framework(const char *exe_dir, BOOL quiet, BOOL force_
             write_net_framework_install_error(return_code, quiet);
             return INSTALLER_RESULT_ERROR;
         }
+        fprintf_check("%s のインストールが完了しました。\n", net_ver);
     }
 
     if (!force_install && language_pack >= 0) {
@@ -342,6 +343,7 @@ InstallerResult check_net_framework(const char *exe_dir, BOOL quiet, BOOL force_
             //言語パックのインストールエラーは無視
             //return INSTALLER_RESULT_ERROR;
         }
+        fprintf_check("%s 言語パックのインストールが完了しました。\n", net_ver);
     }
     return INSTALLER_RESULT_SUCCESS;
 }
@@ -428,7 +430,7 @@ int main(int argc, char **argv) {
     PathRemoveFileSpecFixed(exe_dir);
 
     if (check_exe_dir()) {
-        print_message("簡易インストーラが環境依存文字を含むパスから実行されており、インストールを続行できません。\n");
+        print_message("簡易インストーラが環境依存文字を含むパスから実行されており、\nインストールを続行できません。\n");
         return 1;
     }
 
@@ -496,6 +498,7 @@ int main(int argc, char **argv) {
     curl_global_cleanup();
 #endif
 
+    print_message("\n");
     print_message("%s を使用する準備が完了しました。\n", install_name);
     if (require_reboot) {
         print_message("PCの再起動必要です。\n");
