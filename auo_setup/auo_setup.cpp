@@ -37,6 +37,7 @@ typedef struct setup_options_t {
     BOOL no_debug;
     DWORD parent_pid;
     HWND parent_hwndEdit;
+    BOOL force_run;
 } setup_options_t;
 
 //Ctrl + C ハンドラ
@@ -348,19 +349,20 @@ InstallerResult check_net_framework(const char *exe_dir, BOOL quiet, BOOL force_
     return INSTALLER_RESULT_SUCCESS;
 }
 
-void create_cmd_for_installer(TCHAR *cmd, size_t nSize, setup_options_t *option, BOOL for_main_installer = FALSE) {
+void create_cmd_for_installer(TCHAR *cmd, size_t nSize, setup_options_t *option) {
     cmd[0] = '\0';
-    if (option->no_debug)         strcat_s (cmd, nSize, "-no-debug ");
-    if (for_main_installer) {
-        if (option->force_vc_install)     strcat_s (cmd, nSize, "-force-vc ");
-        if (option->force_dotnet_install) strcat_s (cmd, nSize, "-force-dotnet ");
-    }
+    if (option->no_debug)             strcat_s(cmd, nSize, "-no-debug ");
+    if (option->force_vc_install)     strcat_s(cmd, nSize, "-force-vc ");
+    if (option->force_dotnet_install) strcat_s(cmd, nSize, "-force-dotnet ");
+    if (option->force_run)            strcat_s(cmd, nSize, "-force-run ");
+    if (option->parent_pid)           sprintf_s(cmd + strlen(cmd), nSize - strlen(cmd), "-ppid 0x%08x", option->parent_pid);
+    if (option->parent_hwndEdit)      sprintf_s(cmd + strlen(cmd), nSize - strlen(cmd), "-phwnd 0x%08x", (size_t)option->parent_hwndEdit);
 }
 
 int restart_installer_elevated(const TCHAR *exe_path, setup_options_t *option,
     decltype(avoid_multiple_run_of_auo_setup_exe())& mutexHandle) {
     TCHAR cmd[4096] = { 0 };
-    create_cmd_for_installer(cmd, _countof(cmd), option, TRUE);
+    create_cmd_for_installer(cmd, _countof(cmd), option);
 
     //実行前にmutexを解放
     mutexHandle.reset();
@@ -406,6 +408,8 @@ int main(int argc, char **argv) {
             option.quiet = TRUE;
         } else if (0 == _stricmp(argv[i_arg], "-no-debug")) {
             option.no_debug = TRUE;
+        } else if (0 == _stricmp(argv[i_arg], "-force-run")) {
+            option.force_run = TRUE;
         } else if (0 == _stricmp(argv[i_arg], "-ppid")) {
             i_arg++;
             DWORD value = 0;
@@ -442,6 +446,25 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char install_name[1024] = { 0 };
+    GetPrivateProfileString(INSTALLER_INI_SECTION, "name", "", install_name, sizeof(install_name), installer_ini);
+    PathRemoveExtension(install_name);
+
+    if (!option.force_run) {
+        // ppidが渡されていない場合、ユーザーが直接実行しているものと思われる。
+        // メッセージを出して終了する
+        if (option.parent_pid == 0) {
+            char install_desc_url[1024] = { 0 };
+            GetPrivateProfileString(INSTALLER_INI_SECTION, "install_desc_url", "", install_desc_url, sizeof(install_desc_url), installer_ini);
+            print_message("%sの導入方法が変更されており、\n簡易インストーラ(auo_setup)の実行は不要となっています。\n\n", install_name);
+            print_message("新しい導入方法については、\n同梱の%s_readme.txtの【導入方法】の欄をご確認いただくか、\n下記urlを確認してください。\n\n", install_name);
+            print_message("%s\n\n", install_desc_url);
+            print_message("どれかのキーを押すと終了します。\n");
+            getchar();
+            return 1;
+        }
+    }
+
     auto mutexHandle = avoid_multiple_run_of_auo_setup_exe();
     if (!mutexHandle) {
         print_message("すでに簡易インストーラが実行されているため、終了します。\n");
@@ -457,9 +480,6 @@ int main(int argc, char **argv) {
     curl_global_init(CURL_GLOBAL_ALL);
 #endif
 
-    char install_name[1024] = { 0 };
-    GetPrivateProfileString(INSTALLER_INI_SECTION, "name", "", install_name, sizeof(install_name), installer_ini);
-    PathRemoveExtension(install_name);
     print_message("%s を使用できるようにするための準備を行います。\n", install_name);
 
     bool require_reboot = false;
