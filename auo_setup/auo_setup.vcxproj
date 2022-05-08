@@ -425,7 +425,6 @@
     <ClCompile Include="auo_setup.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="DownloadLibcurl.h" />
     <ClInclude Include="NETVersionChecker.h" />
   </ItemGroup>
   <ItemGroup>

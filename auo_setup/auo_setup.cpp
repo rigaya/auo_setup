@@ -10,12 +10,6 @@
 #include "auo_pipe.h"
 #include "auo_setup_common.h"
 
-#define ENABLE_CURL_DOWNLOAD 0
-
-#if ENABLE_CURL_DOWNLOAD
-#include "DownloadLibcurl.h"
-#endif
-
 static const bool CHECK_DOT_NET_BY_DLL = true;
 
 static std::unique_ptr<HANDLE, HandleDeleter> eventAbort;
@@ -147,18 +141,6 @@ InstallerResult check_vc_runtime(const char *exe_dir, BOOL quiet, BOOL force_ins
     char path_installer[1024] = { 0 };
     PathCombine(path_installer, exe_dir, VC_RUNTIME_INSTALLER);
     if (!PathFileExists(path_installer)) {
-#if ENABLE_CURL_DOWNLOAD
-        GetPrivateProfileString(INSTALLER_INI_SECTION, "vc_runtime", "", buf, sizeof(buf), installer_ini);
-        if (strlen(buf) > 0) {
-            fprintf_check("VC runtime のインストーラをダウンロードします。\n");
-            LibcurlSimpleDownloader downloader;
-            downloader.set_quiet(!!quiet);
-            if (downloader.download_to_file(buf, path_installer)) {
-                print_message("%s の記述が正しくありません。VC runtimeのダウンロードに失敗しました。\n", INSTALLER_INI);
-                return INSTALLER_RESULT_ERROR;
-            }
-        }
-#endif
         if (!PathFileExists(path_installer)) {
             fprintf_check("VC runtime のインストーラが\n  %s\nに存在しません。\n", path_installer);
             fprintf_check("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n");
@@ -255,18 +237,6 @@ InstallerResult check_net_framework(const char *exe_dir, BOOL quiet, BOOL force_
         char path_installer[1024] = { 0 };
         PathCombine(path_installer, exe_dir, DOT_NET_RUNTIME_INSTALLER);
         if (!PathFileExists(path_installer)) {
-#if ENABLE_CURL_DOWNLOAD
-            GetPrivateProfileString(INSTALLER_INI_SECTION, "net_url", "", buf, sizeof(buf), installer_ini);
-            if (strlen(buf) > 0) {
-                fprintf_check("%s のインストーラをダウンロードします。\n", net_ver);
-                LibcurlSimpleDownloader downloader;
-                downloader.set_quiet(!!quiet);
-                if (downloader.download_to_file(buf, path_installer)) {
-                    print_message("%s の記述が正しくありません。%s インストーラのダウンロードに失敗しました。\n", INSTALLER_INI, net_ver);
-                    return INSTALLER_RESULT_ERROR;
-                }
-            }
-#endif
             if (!PathFileExists(path_installer)) {
                 fprintf_check("%s のインストーラが\n  %s\nに存在しません。\n", net_ver, path_installer);
                 fprintf_check("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n");
@@ -307,18 +277,6 @@ InstallerResult check_net_framework(const char *exe_dir, BOOL quiet, BOOL force_
         char path_installer[1024] = { 0 };
         PathCombine(path_installer, exe_dir, DOT_NET_LANGPACK_INSTALLER);
         if (!PathFileExists(path_installer)) {
-#if ENABLE_CURL_DOWNLOAD
-            GetPrivateProfileString(INSTALLER_INI_SECTION, "net_lang_url", "", buf, sizeof(buf), installer_ini);
-            if (strlen(buf) > 0) {
-                fprintf_check("%s 言語パック インストーラをダウンロードします。\n", net_ver);
-                LibcurlSimpleDownloader downloader;
-                downloader.set_quiet(!!quiet);
-                if (downloader.download_to_file(buf, path_installer)) {
-                    print_message("%sの記述が正しくありません。%s 言語パック のインストールに失敗しました。\n", INSTALLER_INI, net_ver);
-                    return INSTALLER_RESULT_ERROR;
-                }
-            }
-#endif
             if (!PathFileExists(path_installer)) {
                 fprintf_check("%s 言語パックのインストーラが\n  %s\nに存在しません。\n", net_ver, path_installer);
                 fprintf_check("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n");
@@ -476,9 +434,6 @@ int main(int argc, char **argv) {
     }
 
     set_signal_handler();
-#if ENABLE_CURL_DOWNLOAD
-    curl_global_init(CURL_GLOBAL_ALL);
-#endif
 
     print_message("%s を使用できるようにするための準備を行います。\n", install_name);
 
@@ -514,9 +469,6 @@ int main(int argc, char **argv) {
         print_message("%sの記述が正しくありません。.NET Frameworkのインストールに失敗しました。\n\n", INSTALLER_INI);
         return 1;
     }
-#if ENABLE_CURL_DOWNLOAD
-    curl_global_cleanup();
-#endif
 
     print_message("\n");
     print_message("%s を使用する準備が完了しました。\n", install_name);
