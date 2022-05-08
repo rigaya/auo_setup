@@ -6,6 +6,7 @@
 - [x264guiEx](https://github.com/rigaya/x264guiEx) 3.xx 以降
 - [x265guiEx](https://github.com/rigaya/x265guiEx) 4.xx 以降
 - [svtAV1guiEx](https://github.com/rigaya/svtAV1guiEx) 1.xx 以降
+- [ffmpegOut](https://github.com/rigaya/ffmpegOut) 1.xx 以降
 - [QSVEnc](https://github.com/rigaya/QSVEnc) 7.xx 以降
 - [NVEnc](https://github.com/rigaya/NVEnc) 6.xx 以降
 - [VCEEnc](https://github.com/rigaya/VCEEnc) 7.xx 以降
@@ -22,6 +23,13 @@ VC runtime, .NET Frameworkのインストールを行います。
 
 VC runtimeや.NET Frameworkがインストールされているかをチェックし、
 されていなければauo_setup.exeを呼んでインストールを行います。
+
+### auo_check_fileopen.exe
+64bitアプリからファイルが開くことができるか確認するためのツールです。
+
+エラーチェックのため、出力ファイルが実際に作成できるか確認する際、32bitアプリであるAviutlから確認するとVirtualStoreが働いてしまい、意図した判定ができません。
+
+そこで、64bitアプリであるこのauo_check_fileopen.exeからチェックを行うようにしています。
 
 ### check_vc.dll
 VC runtimeに依存しているため、このdllをロードできればVC runtimeはインストール済み、できなければインストールの必要があるとわかります。
