@@ -13,27 +13,28 @@
 #include <Windows.h>
 #include <memory>
 #include <functional>
+#include <tchar.h>
 
 static const int   MAX_PATH_LEN               = 1024;
 static const int   TIME_OUT                   = 500;
-static const char *INSTALLER_NAME             = "auo_setup.exe";
-static const char *INSTALLER_INI              = "auo_setup.ini";
-static const char *INSTALLER_INI_SECTION      = "AUO_INSTALLER";
-static const char *DEFAULT_EXE_DIR            = "exe_files";
-static const char *DEFAULT_PLUGINS_DIR        = "plugins";
-static const char *VC_RUNTIME_CHECKER         = "check_vc.dll";
-static const char *DOT_NET_RUNTIME_CHECKER    = "check_dotnet.dll";
+static const TCHAR *INSTALLER_NAME             = _T("auo_setup.exe");
+static const TCHAR *INSTALLER_INI              = _T("auo_setup.ini");
+static const TCHAR *INSTALLER_INI_SECTION      = _T("AUO_INSTALLER");
+static const TCHAR *DEFAULT_EXE_DIR            = _T("exe_files");
+static const TCHAR *DEFAULT_PLUGINS_DIR        = _T("plugins");
+static const TCHAR *VC_RUNTIME_CHECKER         = _T("check_vc.dll");
+static const TCHAR *DOT_NET_RUNTIME_CHECKER    = _T("check_dotnet.dll");
 
-static const char *VC_RUNTIME_INSTALLER       = "VC_redist.x86.exe";
-static const char *DOT_NET_RUNTIME_INSTALLER  = "ndp48-web.exe";
-static const char *DOT_NET_LANGPACK_INSTALLER = "ndp48-x86-x64-allos-jpn.exe";
+static const TCHAR *VC_RUNTIME_INSTALLER       = _T("VC_redist.x86.exe");
+static const TCHAR *DOT_NET_RUNTIME_INSTALLER  = _T("ndp48-web.exe");
+static const TCHAR *DOT_NET_LANGPACK_INSTALLER = _T("ndp48-x86-x64-allos-jpn.exe");
 
-BOOL PathRemoveFileSpecFixed(char *path);
-void get_aviutl_dir(char *aviutl_dir, size_t nSize);
-bool check_dll_can_be_loaded(const char *dllpath);
+BOOL PathRemoveFileSpecFixed(TCHAR *path);
+void get_aviutl_dir(TCHAR *aviutl_dir, size_t nSize);
+bool check_dll_can_be_loaded(const TCHAR *dllpath);
 bool check_admin_required();
 typedef bool (*func_abort)();
-int RunInstaller(const char *exe_path, const char *args, const char *dir, const char *mes, BOOL wait, BOOL hide, BOOL get_exe_message, BOOL quiet, DWORD *return_code, func_abort abort = nullptr);
+int RunInstaller(const TCHAR *exe_path, const TCHAR *args, const TCHAR *dir, const TCHAR *mes, BOOL wait, BOOL hide, BOOL get_exe_message, BOOL quiet, DWORD *return_code, func_abort abort = nullptr);
 int start_installer_elevated(const TCHAR *exe_path, const TCHAR *cmd, HANDLE& processHandle, bool hide);
 
 struct HandleDeleter {

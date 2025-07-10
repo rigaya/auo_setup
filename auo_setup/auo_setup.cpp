@@ -6,36 +6,29 @@
 #include <shlwapi.h>
 #pragma comment(lib, "shlwapi.lib")
 #include <vector>
+#include <string>
+#include <thread>
 #include "NETVersionChecker.h"
 #include "auo_pipe.h"
 #include "auo_setup_common.h"
 
 static const bool CHECK_DOT_NET_BY_DLL = true;
 
+//Ctrl + C ハンドラ
+static bool g_signal_abort = false;
+
 static std::unique_ptr<HANDLE, HandleDeleter> eventAbort;
 static HWND parent_hwndEdit;
 
-enum InstallerResult {
-    INSTALLER_RESULT_REQUIRE_REBOOT = -2,
-    INSTALLER_RESULT_REQUIRE_ADMIN = -1,
-    INSTALLER_RESULT_SUCCESS = 0,
-    INSTALLER_RESULT_ERROR = 1,
-    INSTALLER_RESULT_ABORT = 2,
-};
+// --- auo_setup_aufから持ってきたウィンドウ関連のコード ---
+static const TCHAR *WindowClass = _T("AUO_SETUP");
+static HINSTANCE  hInstance_setup = NULL;
+static HWND       hWndDialog = NULL;
 
-typedef struct setup_options_t {
-    char install_dir[1024];
-    BOOL force_vc_install;
-    BOOL force_dotnet_install;
-    BOOL quiet;
-    BOOL no_debug;
-    DWORD parent_pid;
-    HWND parent_hwndEdit;
-    BOOL force_run;
-} setup_options_t;
+static const int  WindowWidth = 640;
+static const int  WindowHeight = 320;
+static const int  IDC_EDIT = 100;
 
-//Ctrl + C ハンドラ
-static bool g_signal_abort = false;
 #pragma warning(push)
 #pragma warning(disable:4100)
 static void sigintcatch(int sig) {
@@ -62,18 +55,117 @@ static bool func_check_abort() {
     return false;
 }
 
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_CREATE: {
+        RECT rw, rc;
+        GetWindowRect(hWnd, &rw); // ウィンドウ全体のサイズ
+        GetClientRect(hWnd, &rc); // クライアント領域のサイズ
+        //エディットボックスの定義
+        parent_hwndEdit = CreateWindow(
+            _T("EDIT"),             //ウィンドウクラス名
+            NULL,                   //キャプション
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY |
+            WS_HSCROLL | WS_VSCROLL | ES_AUTOHSCROLL | ES_AUTOVSCROLL |
+            ES_LEFT | ES_MULTILINE,         //スタイル指定
+            0, 0,                   //位置 ｘ、ｙ
+            rc.right, rc.bottom,    //幅、高さ
+            hWnd,                   //親ウィンドウ
+            (HMENU)IDC_EDIT,        // メニューハンドルまたは子ウィンドウID
+            hInstance_setup,            //インスタンスハンドル
+            NULL);                  //その他の作成データ
+
+        //テキストエディットのフォント作成
+        HFONT hFnt = CreateFont(18, 0, 0, 0,
+            FW_NORMAL, FALSE, FALSE, 0,
+            SHIFTJIS_CHARSET,
+            OUT_TT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            PROOF_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Meiryo UI"));
+        //テキストエディットのフォント変更のメッセージを送信
+        SendMessage(parent_hwndEdit, WM_SETFONT, (WPARAM)hFnt, MAKELPARAM(FALSE, 0));
+        return 0;
+    }
+    case WM_CLOSE: {
+        if (eventAbort) {
+            //確認して強制終了
+            auto button = MessageBox(hWnd, _T("インストールを強制終了しますか?"), _T("auo_setup"), MB_YESNO | MB_ICONWARNING);
+            if (button == IDYES) {
+                SetEvent(eventAbort.get());
+                g_signal_abort = true;
+            }
+        } else {
+            DestroyWindow(hWnd);
+        }
+    }
+           break;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+        EndPaint(hWnd, &ps);
+    }
+           break;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+ATOM register_window(HINSTANCE hInstance) {
+    WNDCLASSEX wcex;
+
+    wcex.cbSize = sizeof(WNDCLASSEX);
+
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = WndProc;
+    wcex.cbClsExtra = 0;
+    wcex.cbWndExtra = 0;
+    wcex.hInstance = hInstance;
+    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wcex.lpszMenuName = WindowClass;
+    wcex.lpszClassName = WindowClass;
+    wcex.hIcon = 0;
+    wcex.hIconSm = 0;
+
+    return RegisterClassEx(&wcex);
+}
+// --- ここまで ---
+
+enum InstallerResult {
+    INSTALLER_RESULT_REQUIRE_REBOOT = -2,
+    INSTALLER_RESULT_REQUIRE_ADMIN = -1,
+    INSTALLER_RESULT_SUCCESS = 0,
+    INSTALLER_RESULT_ERROR = 1,
+    INSTALLER_RESULT_ABORT = 2,
+};
+
+typedef struct setup_options_t {
+    TCHAR install_dir[1024];
+    BOOL force_vc_install;
+    BOOL force_dotnet_install;
+    BOOL quiet;
+    BOOL no_debug;
+    DWORD parent_pid;
+    HWND parent_hwndEdit;
+    BOOL force_run;
+} setup_options_t;
+
 static void print_message(const TCHAR *format, ...) {
     va_list args;
     va_start(args, format);
-    int len = _vscprintf(format, args) // _vscprintf doesn't count
+    int len = _vsctprintf(format, args) // _vscprintf doesn't count
         + 1; // terminating '\0'
-    std::vector<char> buf(len, 0);
-    vsprintf_s(buf.data(), buf.size(), format, args);
+    std::vector<TCHAR> buf(len, 0);
+    _vstprintf_s(buf.data(), buf.size(), format, args);
 
     if (parent_hwndEdit) {
-        AddTextBoxLine(parent_hwndEdit, "%s", buf.data());
+        AddTextBoxLine(parent_hwndEdit, _T("%s"), buf.data());
     }
-    fprintf(stderr, "%s", buf.data());
+    _ftprintf(stderr, _T("%s"), buf.data());
 }
 
 int check_exe_dir() {
@@ -98,7 +190,7 @@ int check_exe_dir() {
     return (wcscmp(wbuffer, wstr.data()) != 0) ? 1 : 0;
 }
 
-bool check_if_dll_exists(const char *dllname) {
+bool check_if_dll_exists(const TCHAR *dllname) {
     HMODULE hmodule = LoadLibrary(dllname);
     if (hmodule) {
         FreeLibrary(hmodule);
@@ -107,9 +199,9 @@ bool check_if_dll_exists(const char *dllname) {
     return false;
 }
 
-InstallerResult check_vc_runtime(const char *exe_dir, BOOL quiet, BOOL force_install) {
-    char buf[2048] = { 0 };
-    char installer_ini[1024] = { 0 };
+InstallerResult check_vc_runtime(const TCHAR *exe_dir, BOOL quiet, BOOL force_install) {
+    TCHAR buf[2048] = { 0 };
+    TCHAR installer_ini[1024] = { 0 };
     PathCombine(installer_ini, exe_dir, INSTALLER_INI);
 
     if (!force_install) {
@@ -119,9 +211,9 @@ InstallerResult check_vc_runtime(const char *exe_dir, BOOL quiet, BOOL force_ins
             dll_check = true;
         }
         if (dll_check) {
-            GetPrivateProfileString(INSTALLER_INI_SECTION, "vc_runtime_dll", "", buf, sizeof(buf), installer_ini);
-            char *ctx = nullptr;
-            for (char *next = strtok_s(buf, ",", &ctx); next != nullptr; next = strtok_s(nullptr, ",", &ctx)) {
+            GetPrivateProfileString(INSTALLER_INI_SECTION, _T("vc_runtime_dll"), _T(""), buf, _countof(buf), installer_ini);
+            TCHAR *ctx = nullptr;
+            for (TCHAR *next = _tcstok_s(buf, _T(","), &ctx); next != nullptr; next = _tcstok_s(nullptr, _T(","), &ctx)) {
                 if (!check_if_dll_exists(next)) {
                     dll_check = false;
                     break;
@@ -138,65 +230,67 @@ InstallerResult check_vc_runtime(const char *exe_dir, BOOL quiet, BOOL force_ins
 
 #define fprintf_check if (!quiet) print_message
 
-    char path_installer[1024] = { 0 };
+    TCHAR path_installer[1024] = { 0 };
     PathCombine(path_installer, exe_dir, VC_RUNTIME_INSTALLER);
     if (!PathFileExists(path_installer)) {
         if (!PathFileExists(path_installer)) {
-            fprintf_check("VC runtime のインストーラが\n  %s\nに存在しません。\n", path_installer);
-            fprintf_check("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n");
+            fprintf_check(_T("VC runtime のインストーラが\n  %s\nに存在しません。\n"), path_installer);
+            fprintf_check(_T("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n"));
             return INSTALLER_RESULT_ERROR;
         }
     }
 
-    fprintf_check("\n");
-    fprintf_check("VC runtime をインストールします。\n");
+    fprintf_check(_T("\n"));
+    fprintf_check(_T("VC runtime をインストールします。\n"));
     DWORD return_code = 0;
-    RunInstaller(path_installer, "/quiet /norestart", NULL, "VC runtime インストール", TRUE, TRUE, FALSE, quiet, &return_code, func_check_abort);
-    remove(path_installer);
+    RunInstaller(path_installer, _T("/quiet /norestart"), NULL, _T("VC runtime インストール"), TRUE, TRUE, FALSE, quiet, &return_code, func_check_abort);
+    _tremove(path_installer);
     if (   return_code == ERROR_SUCCESS_REBOOT_INITIATED
         || return_code == ERROR_SUCCESS_REBOOT_REQUIRED) {
         return INSTALLER_RESULT_REQUIRE_REBOOT;
+    } else if (return_code == ERROR_PRODUCT_VERSION) {
+        fprintf_check(_T("VC runtime はすでにインストールされています。\n"));
     } else if (return_code == ERROR_OPERATION_ABORTED) {
-        fprintf_check("VC runtime のインストールを中断しました。\n");
+        fprintf_check(_T("VC runtime のインストールを中断しました。\n"));
         return INSTALLER_RESULT_ABORT;
     } else if (return_code != ERROR_SUCCESS) {
-        fprintf_check("VC runtime のインストールでエラーが発生しました。\n");
+        fprintf_check(_T("VC runtime のインストールでエラーが発生しました。\n"));
 
-        char buffer[1024];
-        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, return_code, 0, buffer, sizeof(buffer), NULL);
-        fprintf_check("%s\n", buffer);
+        TCHAR buffer[1024];
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, return_code, 0, buffer, _countof(buffer), NULL);
+        fprintf_check(_T("%s\n"), buffer);
         return INSTALLER_RESULT_ERROR;
     }
-    fprintf_check("VC runtime のインストールが完了しました。\n\n");
+    fprintf_check(_T("VC runtime のインストールが完了しました。\n\n"));
     return INSTALLER_RESULT_SUCCESS;
 }
 
 static void write_net_framework_install_error(DWORD return_code, BOOL quiet) {
     switch (return_code) {
     case ERROR_INSTALL_USEREXIT:
-        fprintf_check("ユーザーによりキャンセルされました。\n");
+        fprintf_check(_T("ユーザーによりキャンセルされました。\n"));
         break;
     case ERROR_INSTALL_FAILURE:
-        fprintf_check("ユーザーによりキャンセルされました。\n");
+        fprintf_check(_T("ユーザーによりキャンセルされました。\n"));
         break;
     case 5100:
-        fprintf_check("空きディスク容量が不足しているか、システムがインストールの必要要件を満たしていません。\n");
+        fprintf_check(_T("空きディスク容量が不足しているか、システムがインストールの必要要件を満たしていません。\n"));
         break;
     default: {
-        char buffer[1024];
-        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, return_code, 0, buffer, sizeof(buffer), NULL);
-        fprintf_check("%s\n", buffer);
+        TCHAR buffer[1024];
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, return_code, 0, buffer, _countof(buffer), NULL);
+        fprintf_check(_T("%s\n"), buffer);
     } break;
     }
 }
 
-InstallerResult check_net_framework(const char *exe_dir, BOOL quiet, BOOL force_install) {
-    char buf[2048] = { 0 };
-    char installer_ini[1024] = { 0 };
+InstallerResult check_net_framework(const TCHAR *exe_dir, BOOL quiet, BOOL force_install) {
+    TCHAR buf[2048] = { 0 };
+    TCHAR installer_ini[1024] = { 0 };
     PathCombine(installer_ini, exe_dir, INSTALLER_INI);
-    GetPrivateProfileString(INSTALLER_INI_SECTION, "net_ver", "", buf, sizeof(buf), installer_ini);
-    char net_ver[256] = { 0 };
-    sprintf_s(net_ver, _countof(net_ver), ".NET Framework %s", buf);
+    GetPrivateProfileString(INSTALLER_INI_SECTION, _T("net_ver"), _T(""), buf, _countof(buf), installer_ini);
+    TCHAR net_ver[256] = { 0 };
+    _stprintf_s(net_ver, _countof(net_ver), _T(".NET Framework %s"), buf);
     int ret = -1, language_pack = -1;
     if (CHECK_DOT_NET_BY_DLL) {
         if (!force_install) {
@@ -207,114 +301,118 @@ InstallerResult check_net_framework(const char *exe_dir, BOOL quiet, BOOL force_
             }
         }
     } else {
-        if      (strstr(buf, "1.1"))         ret = check_net_1_1(&language_pack);
-        else if (strstr(buf, "2.0"))         ret = check_net_2_0(&language_pack);
-        else if (strstr(buf, "3.0"))         ret = check_net_3_0(&language_pack);
-        else if (strstr(buf, "3.5"))         ret = check_net_3_5(&language_pack);
-        else if (strstr(buf, "4.0 Client"))  ret = check_net_4_0_Client(&language_pack);
-        else if (strstr(buf, "4.0 Full"))    ret = check_net_4_0_Full(&language_pack);
-        else if (strstr(buf, "4.0"))         ret = check_net_4_0_Client(&language_pack);
-        else if (strstr(buf, "4.5"))         ret = check_net_4_5(&language_pack);
-        else if (strstr(buf, "4.5.1"))       ret = check_net_4_5_1(&language_pack);
-        else if (strstr(buf, "4.5.2"))       ret = check_net_4_5_2(&language_pack);
-        else if (strstr(buf, "4.6"))         ret = check_net_4_6(&language_pack);
-        else if (strstr(buf, "4.6.1"))       ret = check_net_4_6_1(&language_pack);
-        else if (strstr(buf, "4.6.2"))       ret = check_net_4_6_2(&language_pack);
-        else if (strstr(buf, "4.7"))         ret = check_net_4_7(&language_pack);
-        else if (strstr(buf, "4.7.1"))       ret = check_net_4_7_1(&language_pack);
-        else if (strstr(buf, "4.7.2"))       ret = check_net_4_7_2(&language_pack);
-        else if (strstr(buf, "4.8"))         ret = check_net_4_8(&language_pack);
+        if      (_tcsstr(buf, _T("1.1")))         ret = check_net_1_1(&language_pack);
+        else if (_tcsstr(buf, _T("2.0")))         ret = check_net_2_0(&language_pack);
+        else if (_tcsstr(buf, _T("3.0")))         ret = check_net_3_0(&language_pack);
+        else if (_tcsstr(buf, _T("3.5")))         ret = check_net_3_5(&language_pack);
+        else if (_tcsstr(buf, _T("4.0 Client")))  ret = check_net_4_0_Client(&language_pack);
+        else if (_tcsstr(buf, _T("4.0 Full")))    ret = check_net_4_0_Full(&language_pack);
+        else if (_tcsstr(buf, _T("4.0")))         ret = check_net_4_0_Client(&language_pack);
+        else if (_tcsstr(buf, _T("4.5")))         ret = check_net_4_5(&language_pack);
+        else if (_tcsstr(buf, _T("4.5.1")))       ret = check_net_4_5_1(&language_pack);
+        else if (_tcsstr(buf, _T("4.5.2")))       ret = check_net_4_5_2(&language_pack);
+        else if (_tcsstr(buf, _T("4.6")))         ret = check_net_4_6(&language_pack);
+        else if (_tcsstr(buf, _T("4.6.1")))       ret = check_net_4_6_1(&language_pack);
+        else if (_tcsstr(buf, _T("4.6.2")))       ret = check_net_4_6_2(&language_pack);
+        else if (_tcsstr(buf, _T("4.7")))         ret = check_net_4_7(&language_pack);
+        else if (_tcsstr(buf, _T("4.7.1")))       ret = check_net_4_7_1(&language_pack);
+        else if (_tcsstr(buf, _T("4.7.2")))       ret = check_net_4_7_2(&language_pack);
+        else if (_tcsstr(buf, _T("4.8")))         ret = check_net_4_8(&language_pack);
         else return INSTALLER_RESULT_ERROR;
     }
 
     if (!force_install && ret >= 0) {
-        fprintf_check("%s はすでにインストールされています。\n", net_ver);
+        fprintf_check(_T("%s はすでにインストールされています。\n"), net_ver);
     } else {
         if (check_admin_required()) {
             return INSTALLER_RESULT_REQUIRE_ADMIN;
         }
 
-        char path_installer[1024] = { 0 };
+        TCHAR path_installer[1024] = { 0 };
         PathCombine(path_installer, exe_dir, DOT_NET_RUNTIME_INSTALLER);
         if (!PathFileExists(path_installer)) {
             if (!PathFileExists(path_installer)) {
-                fprintf_check("%s のインストーラが\n  %s\nに存在しません。\n", net_ver, path_installer);
-                fprintf_check("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n");
+                fprintf_check(_T("%s のインストーラが\n  %s\nに存在しません。\n"), net_ver, path_installer);
+                fprintf_check(_T("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n"));
                 return INSTALLER_RESULT_ERROR;
             }
         }
 
-        char run_process_mes[1024] = { 0 };
-        sprintf_s(run_process_mes, _countof(run_process_mes), "%s インストール", net_ver);
-        fprintf_check("%s をインストールします。最大で10分ほどかかる場合があります。\n", net_ver);
+        TCHAR run_process_mes[1024] = { 0 };
+        _stprintf_s(run_process_mes, _countof(run_process_mes), _T("%s インストール"), net_ver);
+        fprintf_check(_T("%s をインストールします。最大で10分ほどかかる場合があります。\n"), net_ver);
         DWORD return_code = 0;
-        RunInstaller(path_installer, "/q /LANG:ENG /norestart", NULL, run_process_mes, TRUE, TRUE, FALSE, quiet, &return_code, func_check_abort);
-        fprintf_check("\n\n");
-        remove(path_installer);
+        RunInstaller(path_installer, _T("/q /LANG:ENG /norestart"), NULL, run_process_mes, TRUE, TRUE, FALSE, quiet, &return_code, func_check_abort);
+        fprintf_check(_T("\n\n"));
+        _tremove(path_installer);
         if (   return_code == ERROR_SUCCESS_REBOOT_INITIATED
             || return_code == ERROR_SUCCESS_REBOOT_REQUIRED) {
             return INSTALLER_RESULT_REQUIRE_REBOOT;
         } else if (return_code == ERROR_OPERATION_ABORTED) {
-            fprintf_check("%s のインストールを中断しました。\n", net_ver);
+            fprintf_check(_T("%s のインストールを中断しました。\n"), net_ver);
             return INSTALLER_RESULT_ABORT;
+        } else if (return_code == ERROR_PRODUCT_VERSION) {
+            fprintf_check(_T("%s はすでにインストールされています。\n"), net_ver);
         } else if (return_code != ERROR_SUCCESS) {
-            fprintf_check("%s のインストールでエラーが発生しました。\n", net_ver);
+            fprintf_check(_T("%s のインストールでエラーが発生しました。\n"), net_ver);
             write_net_framework_install_error(return_code, quiet);
             return INSTALLER_RESULT_ERROR;
         }
-        fprintf_check("%s のインストールが完了しました。\n", net_ver);
+        fprintf_check(_T("%s のインストールが完了しました。\n"), net_ver);
     }
 
     if (!force_install && language_pack >= 0) {
         if (ret < 0) {
-            fprintf_check("%s 言語パック はすでにインストールされています。\n", net_ver);
+            fprintf_check(_T("%s 言語パック はすでにインストールされています。\n"), net_ver);
         }
     } else {
         if (check_admin_required()) {
             return INSTALLER_RESULT_REQUIRE_ADMIN;
         }
 
-        char path_installer[1024] = { 0 };
+        TCHAR path_installer[1024] = { 0 };
         PathCombine(path_installer, exe_dir, DOT_NET_LANGPACK_INSTALLER);
         if (!PathFileExists(path_installer)) {
             if (!PathFileExists(path_installer)) {
-                fprintf_check("%s 言語パックのインストーラが\n  %s\nに存在しません。\n", net_ver, path_installer);
-                fprintf_check("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n");
+                fprintf_check(_T("%s 言語パックのインストーラが\n  %s\nに存在しません。\n"), net_ver, path_installer);
+                fprintf_check(_T("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n"));
                 return INSTALLER_RESULT_ERROR;
             }
         }
 
-        char run_process_mes[1024] = { 0 };
-        sprintf_s(run_process_mes, _countof(run_process_mes), "%s 言語パック インストール", net_ver);
-        fprintf_check("%s をインストールします。5分ほどかかる場合があります。\n", net_ver);
+        TCHAR run_process_mes[1024] = { 0 };
+        _stprintf_s(run_process_mes, _countof(run_process_mes), _T("%s 言語パック インストール"), net_ver);
+        fprintf_check(_T("%s をインストールします。5分ほどかかる場合があります。\n"), net_ver);
         DWORD return_code = 0;
-        RunInstaller(path_installer, "/q /norestart", NULL, run_process_mes, TRUE, TRUE, FALSE, quiet, &return_code, func_check_abort);
-        fprintf_check("\n\n");
-        remove(path_installer);
+        RunInstaller(path_installer, _T("/q /norestart"), NULL, run_process_mes, TRUE, TRUE, FALSE, quiet, &return_code, func_check_abort);
+        fprintf_check(_T("\n\n"));
+        _tremove(path_installer);
         if (   return_code == ERROR_SUCCESS_REBOOT_INITIATED
             || return_code == ERROR_SUCCESS_REBOOT_REQUIRED) {
             return INSTALLER_RESULT_REQUIRE_REBOOT;
         } else if (return_code == ERROR_OPERATION_ABORTED) {
             return INSTALLER_RESULT_ABORT;
+        } else if (return_code == ERROR_PRODUCT_VERSION) {
+            fprintf_check(_T("%s はすでにインストールされています。\n"), net_ver);
         } else if (return_code != ERROR_SUCCESS) {
-            fprintf_check("%s 言語パックのインストールでエラーが発生しました。\n", net_ver);
+            fprintf_check(_T("%s 言語パックのインストールでエラーが発生しました。\n"), net_ver);
             write_net_framework_install_error(return_code, quiet);
             //言語パックのインストールエラーは無視
             //return INSTALLER_RESULT_ERROR;
         }
-        fprintf_check("%s 言語パックのインストールが完了しました。\n", net_ver);
+        fprintf_check(_T("%s 言語パックのインストールが完了しました。\n"), net_ver);
     }
     return INSTALLER_RESULT_SUCCESS;
 }
 
 void create_cmd_for_installer(TCHAR *cmd, size_t nSize, setup_options_t *option) {
-    cmd[0] = '\0';
-    if (option->no_debug)             strcat_s(cmd, nSize, "-no-debug ");
-    if (option->force_vc_install)     strcat_s(cmd, nSize, "-force-vc ");
-    if (option->force_dotnet_install) strcat_s(cmd, nSize, "-force-dotnet ");
-    if (option->force_run)            strcat_s(cmd, nSize, "-force-run ");
-    if (option->parent_pid)           sprintf_s(cmd + strlen(cmd), nSize - strlen(cmd), "-ppid 0x%08x", option->parent_pid);
-    if (option->parent_hwndEdit)      sprintf_s(cmd + strlen(cmd), nSize - strlen(cmd), "-phwnd 0x%08x", (size_t)option->parent_hwndEdit);
+    cmd[0] = _T('\0');
+    if (option->no_debug)             _tcscat_s(cmd, nSize, _T("-no-debug "));
+    if (option->force_vc_install)     _tcscat_s(cmd, nSize, _T("-force-vc "));
+    if (option->force_dotnet_install) _tcscat_s(cmd, nSize, _T("-force-dotnet "));
+    if (option->force_run)            _tcscat_s(cmd, nSize, _T("-force-run "));
+    if (option->parent_pid)           _stprintf_s(cmd + _tcslen(cmd), nSize - _tcslen(cmd), _T("-ppid 0x%08x "), option->parent_pid);
+    if (option->parent_hwndEdit)      _stprintf_s(cmd + _tcslen(cmd), nSize - _tcslen(cmd), _T("-phwnd 0x%08x"), (size_t)option->parent_hwndEdit);
 }
 
 int restart_installer_elevated(const TCHAR *exe_path, setup_options_t *option,
@@ -336,113 +434,56 @@ int restart_installer_elevated(const TCHAR *exe_path, setup_options_t *option,
     return return_code;
 }
 
-static void print_help(const char *exe_path) {
-    fprintf(stdout, "%s\n"
-        "Aviutlの出力プラグインの簡易インストーラです。\n"
-        "\n"
-        "オプション\n"
-        "-help                        このヘルプの表示\n"
-        "\n"
-        "-force-vc                    VC runtimeのインストールを強制します。\n"
-        "-force-dotnet                .NET Frameworkのインストールを強制します。\n"
-        "\n"
-        "-no-debug                    インストール時のデバッグ出力を行いません。\n"
-        "\n"
-        "-quiet            コマンドプロンプトにメッセージを表示しない。\n",
+static void print_help(const TCHAR *exe_path) {
+    _ftprintf(stdout, _T("%s\n")
+        _T("Aviutlの出力プラグインの簡易インストーラです。\n")
+        _T("\n")
+        _T("オプション\n")
+        _T("-help                        このヘルプの表示\n")
+        _T("\n")
+        _T("-force-vc                    VC runtimeのインストールを強制します。\n")
+        _T("-force-dotnet                .NET Frameworkのインストールを強制します。\n")
+        _T("\n")
+        _T("-no-debug                    インストール時のデバッグ出力を行いません。\n")
+        _T("\n")
+        _T("-quiet            コマンドプロンプトにメッセージを表示しない。\n"),
         PathFindFileName(exe_path)
         );
 }
 
-int main(int argc, char **argv) {
-    setup_options_t option = { 0 };
-    parent_hwndEdit = NULL;
-
-    for (int i_arg = 1; i_arg < argc; i_arg++) {
-        if (0 == _stricmp(argv[i_arg], "-force-vc")) {
-            option.force_vc_install = TRUE;
-        } else if (0 == _stricmp(argv[i_arg], "-force-dotnet")) {
-            option.force_dotnet_install = TRUE;
-        } else if (0 == _stricmp(argv[i_arg], "-quiet")) {
-            option.quiet = TRUE;
-        } else if (0 == _stricmp(argv[i_arg], "-no-debug")) {
-            option.no_debug = TRUE;
-        } else if (0 == _stricmp(argv[i_arg], "-force-run")) {
-            option.force_run = TRUE;
-        } else if (0 == _stricmp(argv[i_arg], "-ppid")) {
-            i_arg++;
-            DWORD value = 0;
-            if (sscanf_s(argv[i_arg], "0x%x", &value) == 1) {
-                option.parent_pid = value;
-            }
-        } else if (0 == _stricmp(argv[i_arg], "-phwnd")) {
-            i_arg++;
-            DWORD value = 0;
-            if (sscanf_s(argv[i_arg], "0x%x", &value) == 1) {
-                parent_hwndEdit = (HWND)value;
-            }
-        } else if (0 == _stricmp(argv[i_arg], "-help")
-            || 0 == _stricmp(argv[i_arg], "-h")) {
-            print_help(argv[0]);
-            return 1;
-        }
-    }
-
-    char exe_dir[1024] = { 0 };
-    strcpy_s(exe_dir, _countof(exe_dir), argv[0]);
-    PathRemoveFileSpecFixed(exe_dir);
-
-    if (check_exe_dir()) {
-        print_message("簡易インストーラが環境依存文字を含むパスから実行されており、\nインストールを続行できません。\n");
-        return 1;
-    }
-
-    char installer_ini[1024] = { 0 };
-    PathCombine(installer_ini, exe_dir, INSTALLER_INI);
-    if (!PathFileExists(installer_ini)) {
-        print_message("%sが存在しません。インストールを続行できません。\n", INSTALLER_INI);
-        print_message("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n");
-        return 1;
-    }
-
-    char install_name[1024] = { 0 };
-    GetPrivateProfileString(INSTALLER_INI_SECTION, "name", "", install_name, sizeof(install_name), installer_ini);
-    PathRemoveExtension(install_name);
-
-    if (!option.force_run) {
-        // ppidが渡されていない場合、ユーザーが直接実行しているものと思われる。
-        // メッセージを出して終了する
-        if (option.parent_pid == 0) {
-            char install_desc_url[1024] = { 0 };
-            GetPrivateProfileString(INSTALLER_INI_SECTION, "install_desc_url", "", install_desc_url, sizeof(install_desc_url), installer_ini);
-            print_message("%sの導入方法が変更されており、\n簡易インストーラ(auo_setup)の実行は不要となっています。\n\n", install_name);
-            print_message("新しい導入方法については、\n同梱の%s_readme.txtの【導入方法】の欄をご確認いただくか、\n下記urlを確認してください。\n\n", install_name);
-            print_message("%s\n\n", install_desc_url);
-            print_message("どれかのキーを押すと終了します。\n");
-            getchar();
-            return 1;
-        }
-    }
-
+int run_installer_main(setup_options_t *option, const TCHAR *exe_path) {
     auto mutexHandle = avoid_multiple_run_of_auo_setup_exe();
     if (!mutexHandle) {
-        print_message("すでに簡易インストーラが実行されているため、終了します。\n");
+        print_message(_T("すでに簡易インストーラが実行されているため、終了します。\n"));
         return 0;
     }
 
-    if (option.parent_pid != 0) {
-        eventAbort = open_abort_event(option.parent_pid);
+    if (option->parent_pid != 0) {
+        eventAbort = open_abort_event(option->parent_pid);
+    } else {
+        eventAbort = create_abort_event();
     }
 
     set_signal_handler();
 
-    print_message("%s を使用できるようにするための準備を行います。\n", install_name);
+    TCHAR exe_dir[1024] = { 0 };
+    _tcscpy_s(exe_dir, _countof(exe_dir), exe_path);
+    PathRemoveFileSpec(exe_dir);
+
+    TCHAR installer_ini[1024] = { 0 };
+    PathCombine(installer_ini, exe_dir, INSTALLER_INI);
+    TCHAR install_name[1024] = { 0 };
+    GetPrivateProfileString(INSTALLER_INI_SECTION, _T("name"), _T(""), install_name, _countof(install_name), installer_ini);
+    PathRemoveExtension(install_name);
+
+    print_message(_T("%s を使用できるようにするための準備を行います。\n"), install_name);
 
     bool require_reboot = false;
 
     //VC runtimeのインストール
-    int ret = check_vc_runtime(exe_dir, option.quiet, option.force_vc_install);
+    int ret = check_vc_runtime(exe_dir, option->quiet, option->force_vc_install);
     if (ret == INSTALLER_RESULT_REQUIRE_ADMIN) {
-        if (restart_installer_elevated(argv[0], &option, mutexHandle)) {
+        if (restart_installer_elevated(exe_path, option, mutexHandle)) {
             return 1;
         }
         return 0;
@@ -455,9 +496,9 @@ int main(int argc, char **argv) {
     }
 
     //.NET Frameworkのインストール
-    ret = check_net_framework(exe_dir, option.quiet, option.force_dotnet_install);
+    ret = check_net_framework(exe_dir, option->quiet, option->force_dotnet_install);
     if (ret == INSTALLER_RESULT_REQUIRE_ADMIN) {
-        if (restart_installer_elevated(argv[0], &option, mutexHandle)) {
+        if (restart_installer_elevated(exe_path, option, mutexHandle)) {
             return 1;
         }
         return 0;
@@ -466,19 +507,128 @@ int main(int argc, char **argv) {
     } else if (ret == INSTALLER_RESULT_REQUIRE_REBOOT) {
         require_reboot = true;
     } else if (ret > 0) {
-        print_message("%sの記述が正しくありません。.NET Frameworkのインストールに失敗しました。\n\n", INSTALLER_INI);
+        print_message(_T("%sの記述が正しくありません。.NET Frameworkのインストールに失敗しました。\n\n"), INSTALLER_INI);
         return 1;
     }
 
-    print_message("\n");
-    print_message("%s を使用する準備が完了しました。\n", install_name);
+    print_message(_T("\n"));
+    print_message(_T("%s を使用する準備が完了しました。\n"), install_name);
     if (require_reboot) {
-        print_message("PCの再起動必要です。\n");
-        print_message("PCの再起動後、%s が使用できるようになります。\n", install_name);
+        print_message(_T("PCの再起動必要です。\n"));
+        print_message(_T("PCの再起動後、%s が使用できるようになります。\n"), install_name);
         return -1;
     }
-    print_message("\n");
-    print_message("このウィンドウを閉じ、\n");
-    print_message("Aviutlの出力プラグインに %s が追加されているか、確認してください。\n", install_name);
+    print_message(_T("\n"));
+    print_message(_T("このウィンドウを閉じ、\n"));
+    print_message(_T("Aviutlの出力プラグインに %s が追加されているか、確認してください。\n"), install_name);
+
+    eventAbort.reset();
+    SendMessage(hWndDialog, WM_CLOSE, 0, 0);
     return 0;
+}
+
+int _tmain(int argc, TCHAR **argv) {
+    setup_options_t option = { 0 };
+    parent_hwndEdit = NULL;
+
+    for (int i_arg = 1; i_arg < argc; i_arg++) {
+        if (0 == _tcsicmp(argv[i_arg], _T("-force-vc"))) {
+            option.force_vc_install = TRUE;
+        } else if (0 == _tcsicmp(argv[i_arg], _T("-force-dotnet"))) {
+            option.force_dotnet_install = TRUE;
+        } else if (0 == _tcsicmp(argv[i_arg], _T("-quiet"))) {
+            option.quiet = TRUE;
+        } else if (0 == _tcsicmp(argv[i_arg], _T("-no-debug"))) {
+            option.no_debug = TRUE;
+        } else if (0 == _tcsicmp(argv[i_arg], _T("-force-run"))) {
+            option.force_run = TRUE;
+        } else if (0 == _tcsicmp(argv[i_arg], _T("-ppid"))) {
+            i_arg++;
+            DWORD value = 0;
+            if (_stscanf_s(argv[i_arg], _T("0x%x"), &value) == 1) {
+                option.parent_pid = value;
+            }
+        } else if (0 == _tcsicmp(argv[i_arg], _T("-phwnd"))) {
+            i_arg++;
+            DWORD value = 0;
+            if (_stscanf_s(argv[i_arg], _T("0x%x"), &value) == 1) {
+                parent_hwndEdit = (HWND)value;
+            }
+        } else if (0 == _tcsicmp(argv[i_arg], _T("-help"))
+            || 0 == _tcsicmp(argv[i_arg], _T("-h"))) {
+            print_help(argv[0]);
+            return 1;
+        }
+    }
+
+    TCHAR exe_dir[1024] = { 0 };
+    _tcscpy_s(exe_dir, _countof(exe_dir), argv[0]);
+    PathRemoveFileSpec(exe_dir);
+
+    if (check_exe_dir()) {
+        print_message(_T("簡易インストーラが環境依存文字を含むパスから実行されており、\nインストールを続行できません。\n"));
+        return 1;
+    }
+
+    TCHAR installer_ini[1024] = { 0 };
+    PathCombine(installer_ini, exe_dir, INSTALLER_INI);
+    if (!PathFileExists(installer_ini)) {
+        print_message(_T("%sが存在しません。インストールを続行できません。\n"), INSTALLER_INI);
+        print_message(_T("ダウンロードしたzipファイルの中身をすべてAviutlフォルダ内にコピーできているか、再度確認してください。\n"));
+        return 1;
+    }
+
+    if (!option.force_run) {
+        // ppidが渡されていない場合、ユーザーが直接実行しているものと思われる。
+        // メッセージを出して終了する
+        if (option.parent_pid == 0) {
+            TCHAR install_name[1024] = { 0 };
+            GetPrivateProfileString(INSTALLER_INI_SECTION, _T("name"), _T(""), install_name, _countof(install_name), installer_ini);
+            PathRemoveExtension(install_name);
+            TCHAR install_desc_url[1024] = { 0 };
+            GetPrivateProfileString(INSTALLER_INI_SECTION, _T("install_desc_url"), _T(""), install_desc_url, _countof(install_desc_url), installer_ini);
+            print_message(_T("%sの導入方法が変更されており、\n簡易インストーラ(auo_setup)の実行は不要となっています。\n\n"), install_name);
+            print_message(_T("新しい導入方法については、\n同梱の%s_readme.txtの【導入方法】の欄をご確認いただくか、\n下記urlを確認してください。\n\n"), install_name);
+            print_message(_T("%s\n\n"), install_desc_url);
+            print_message(_T("どれかのキーを押すと終了します。\n"));
+            getchar();
+            return 1;
+        }
+    }
+
+    //-phwndが指定されていない場合、ウィンドウを作成してそこにログを出力する
+    if (parent_hwndEdit == NULL) {
+        hInstance_setup = GetModuleHandle(NULL);
+        register_window(hInstance_setup);
+
+        TCHAR install_name[1024] = { 0 };
+        GetPrivateProfileString(INSTALLER_INI_SECTION, _T("name"), _T(""), install_name, _countof(install_name), installer_ini);
+        TCHAR title[1024];
+        _stprintf_s(title, _T("auo_setup: %s 使用の準備を行います..."), install_name);
+
+        hWndDialog = CreateWindow(WindowClass, title,
+            WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
+            CW_USEDEFAULT, CW_USEDEFAULT, WindowWidth, WindowHeight, nullptr, nullptr, hInstance_setup, nullptr);
+
+        ShowWindow(hWndDialog, SW_SHOW);
+        UpdateWindow(hWndDialog);
+
+        std::thread thread_run_installer(run_installer_main, &option, argv[0]);
+
+        // メイン メッセージ ループ
+        {
+            MSG msg;
+            while (GetMessage(&msg, nullptr, 0, 0)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+        }
+
+        if (thread_run_installer.joinable()) {
+            thread_run_installer.join();
+        }
+        return 0;
+    }
+
+    return run_installer_main(&option, argv[0]);
 }

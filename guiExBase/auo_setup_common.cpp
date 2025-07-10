@@ -8,25 +8,25 @@
 #include "auo_pipe.h"
 #include "auo_setup_common.h"
 
-static const char *AUO_SETUP_MUTEX_NAME = "auo_setup_avoid_multirun_mutex";
-static const char *AUOSETUP_EVENT_ABORT = "AUOSETUP_EVENT_ABORT";
+static const TCHAR *AUO_SETUP_MUTEX_NAME = _T("auo_setup_avoid_multirun_mutex");
+static const TCHAR *AUOSETUP_EVENT_ABORT = _T("AUOSETUP_EVENT_ABORT");
 
 //PathRemoveFileSpecFixedがVistaでは5C問題を発生させるため、その回避策
-BOOL PathRemoveFileSpecFixed(char *path) {
-    char *ptr = PathFindFileNameA(path);
+BOOL PathRemoveFileSpecFixed(TCHAR *path) {
+    TCHAR *ptr = PathFindFileName(path);
     if (path == ptr)
         return FALSE;
-    *(ptr - 1) = '\0';
+    *(ptr - 1) = _T('\0');
     return TRUE;
 }
 
-void get_aviutl_dir(char *aviutl_dir, size_t nSize) {
-    GetModuleFileNameA(NULL, aviutl_dir, (DWORD)nSize);
-    PathRemoveFileSpecFixed(aviutl_dir);
+void get_aviutl_dir(TCHAR *aviutl_dir, size_t nSize) {
+    GetModuleFileName(NULL, aviutl_dir, (DWORD)nSize);
+    PathRemoveFileSpec(aviutl_dir);
 }
 
 
-bool check_dll_can_be_loaded(const char *dllpath) {
+bool check_dll_can_be_loaded(const TCHAR *dllpath) {
     const DWORD dwOldErrorMode = SetErrorMode(SEM_FAILCRITICALERRORS);
     HMODULE hmodule = LoadLibrary(dllpath);
     if (hmodule) {
@@ -77,42 +77,42 @@ static int read_from_pipe(PIPE_SET *pipes, BOOL fromStdErr) {
     if (pipe_read) {
         ReadFile(h_read, pipes->read_buf + pipes->buf_len, sizeof(pipes->read_buf) - pipes->buf_len - 1, &pipe_read, NULL);
         pipes->buf_len += pipe_read;
-        pipes->read_buf[pipes->buf_len] = '\0';
+        pipes->read_buf[pipes->buf_len] = _T('\0');
     }
     return pipe_read;
 }
 
-static void wait_for_process(const PROCESS_INFORMATION *pi, const char *mes, PIPE_SET *pipes, BOOL get_exe_message, func_abort abort) {
+static void wait_for_process(const PROCESS_INFORMATION *pi, const TCHAR *mes, PIPE_SET *pipes, BOOL get_exe_message, func_abort abort) {
     for (int i = 0; WAIT_TIMEOUT == WaitForSingleObject(pi->hProcess, TIME_OUT) && !abort(); i++) {
         if (get_exe_message) {
             if (read_from_pipe(pipes, pipes->stdOut.mode == AUO_PIPE_DISABLE) > 0) {
-                fprintf(stderr, "%s", pipes->read_buf);
+                _ftprintf(stderr, _T("%s"), pipes->read_buf);
                 pipes->buf_len = 0;
             }
         } else {
-            static const char *STR[] = { ".         ", "..        ", "...       ", "....      ", ".....     ", "......    ", "......   ", ".......  ", "........ ", "........." };
-            fprintf(stderr, "\r%s%s", mes, STR[i % _countof(STR)]);
+            static const TCHAR *STR[] = { _T(".         "), _T("..        "), _T("...       "), _T("....      "), _T(".....     "), _T("......    "), _T("......   "), _T(".......  "), _T("........ "), _T(".........") };
+            _ftprintf(stderr, _T("\r%s%s"), mes, STR[i % _countof(STR)]);
         }
     }
     if (get_exe_message && !abort()) {
         while (read_from_pipe(pipes, pipes->stdOut.mode == AUO_PIPE_DISABLE) > 0) {
-            fprintf(stderr, "%s", pipes->read_buf);
+            _ftprintf(stderr, _T("%s"), pipes->read_buf);
             pipes->buf_len = 0;
         }
     }
 }
 
-static inline const char *GetFullPath(const char *path, char *buffer, size_t nSize) {
-    if (PathIsRelativeA(path) == FALSE)
+static inline const TCHAR *GetFullPath(const TCHAR *path, TCHAR *buffer, size_t nSize) {
+    if (PathIsRelative(path) == FALSE)
         return path;
 
-    _fullpath(buffer, path, nSize);
+    _tfullpath(buffer, path, nSize);
     return buffer;
 }
 
-int RunInstaller(const char *exe_path, const char *args, const char *dir, const char *mes, BOOL wait, BOOL hide, BOOL get_exe_message, BOOL quiet, DWORD *return_code, func_abort abort) {
-    char dir_full[1024] = { 0 };
-    char cmd[2048] = { 0 };
+int RunInstaller(const TCHAR *exe_path, const TCHAR *args, const TCHAR *dir, const TCHAR *mes, BOOL wait, BOOL hide, BOOL get_exe_message, BOOL quiet, DWORD *return_code, func_abort abort) {
+    TCHAR dir_full[1024] = { 0 };
+    TCHAR cmd[2048] = { 0 };
     PROCESS_INFORMATION pi = { 0 };
     PIPE_SET pipes = { 0 };
     InitPipes(&pipes);
@@ -124,8 +124,8 @@ int RunInstaller(const char *exe_path, const char *args, const char *dir, const 
         abort = func_abort_always_false;
     }
 
-    sprintf_s(cmd, _countof(cmd), "\"%s\" %s", exe_path, args);
-    int ret = RunProcess(cmd, GetFullPath(dir, dir_full, _countof(dir_full)), &pi, (get_exe_message) ? &pipes : NULL, GetPriorityClass(GetCurrentProcess()), hide, hide);
+    _stprintf_s(cmd, _countof(cmd), _T("\"%s\" %s"), exe_path, args);
+    int ret = RunProcess(cmd, (dir) ? GetFullPath(dir, dir_full, _countof(dir_full)) : nullptr, &pi, (get_exe_message) ? &pipes : NULL, GetPriorityClass(GetCurrentProcess()), hide, hide);
     if (RP_SUCCESS == ret) {
         if (wait) {
             wait_for_process(&pi, mes, &pipes, get_exe_message, abort);
@@ -142,8 +142,8 @@ int RunInstaller(const char *exe_path, const char *args, const char *dir, const 
         CloseHandle(pi.hThread);
         if (wait && !quiet) {
             if (get_exe_message)
-                fprintf(stderr, "\n");
-            fprintf(stderr, "\r%s完了...             \n", mes);
+                _ftprintf(stderr, _T("\n"));
+            _ftprintf(stderr, _T("\r%s完了...             \n"), mes);
         }
     }
     return ret;
@@ -181,24 +181,24 @@ std::unique_ptr<HANDLE, HandleDeleter> avoid_multiple_run_of_auo_setup_exe() {
 }
 
 std::unique_ptr<HANDLE, HandleDeleter> create_abort_event() {
-    char event_name[1024];
-    sprintf_s(event_name, "%s_0x%8x", AUOSETUP_EVENT_ABORT, GetCurrentProcessId());
+    TCHAR event_name[1024];
+    _stprintf_s(event_name, _T("%s_0x%8x"), AUOSETUP_EVENT_ABORT, GetCurrentProcessId());
     return std::unique_ptr<HANDLE, HandleDeleter>(CreateEvent(NULL, TRUE, FALSE, event_name));
 }
 
 std::unique_ptr<HANDLE, HandleDeleter> open_abort_event(const DWORD pid) {
-    char event_name[1024];
-    sprintf_s(event_name, "%s_0x%8x", AUOSETUP_EVENT_ABORT, pid);
+    TCHAR event_name[1024];
+    _stprintf_s(event_name, _T("%s_0x%8x"), AUOSETUP_EVENT_ABORT, pid);
     return std::unique_ptr<HANDLE, HandleDeleter>(OpenEvent(EVENT_ALL_ACCESS, FALSE, event_name));
 }
 
 void AddTextBoxLine(HWND hwnd, const TCHAR *format, ...) {
     va_list args;
     va_start(args, format);
-    int len = _vscprintf(format, args) // _vscprintf doesn't count
+    int len = _vsctprintf(format, args) // _vscprintf doesn't count
         + 1; // terminating '\0'
-    std::vector<char> buf(len, 0);
-    vsprintf_s(buf.data(), buf.size(), format, args);
+    std::vector<TCHAR> buf(len, 0);
+    _vstprintf_s(buf.data(), buf.size(), format, args);
 
     //エディットすべての文字列の長さを取得
     len = SendMessage(hwnd, WM_GETTEXTLENGTH, 0, 0);

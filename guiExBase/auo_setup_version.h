@@ -10,8 +10,8 @@
 #ifndef _AUO_SETUP_VERSION_H_
 #define _AUO_SETUP_VERSION_H_
 
-#define AUO_SETUP_VERSION          0,2,1,0
-#define AUO_SETUP_VERSION_STR      "2.01"
+#define AUO_SETUP_VERSION          0,2,2,0
+#define AUO_SETUP_VERSION_STR      "2.02"
 
 #ifdef DEBUG
 #define VER_DEBUG   VS_FF_DEBUG
